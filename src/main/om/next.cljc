@@ -490,7 +490,7 @@
 ;; CLJS
 
 #?(:cljs
-   (defonce *logger*
+   (defonce ^:dynamic *logger*
      (when ^boolean goog.DEBUG
        (.setCapturing (Console.) true)
        (glog/getLogger "om.next"))))
