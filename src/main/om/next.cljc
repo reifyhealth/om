@@ -2515,6 +2515,13 @@
               {:keys [ui->props]} config
               env (to-env config)
               root (:root @state)]
+          ;; Nothing in the indexer answers to the queued keys. Under a React 18
+          ;; concurrent root the initial mount may not have committed yet, so no
+          ;; component is registered and the targeted pass below would silently
+          ;; drop this update. Re-render from the root instead of losing it.
+          #?(:cljs
+             (when (empty? cs)
+               ((:render st))))
           #?(:cljs
              (doseq [c ((:optimize config) cs)]
                (let [props-change? (> (p/basis-t this) (t c))]

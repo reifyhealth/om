@@ -2568,6 +2568,51 @@
                 {:foo 1}))
          (is (true? (:forceUpdate @update-atom)))))))
 
+#?(:cljs
+   (deftest test-reconcile-root-render-when-nothing-indexed
+     (let [Root (ui
+                  static om/IQuery
+                  (query [this]
+                    [:foo]))
+           reconciler-with (fn [ref->components]
+                             (om/reconciler
+                               {:indexer #(om/indexer
+                                            {:index-component (fn [indexes component] indexes)
+                                             :drop-component  (fn [indexes component] indexes)
+                                             :ref->components ref->components})}))]
+       (testing "queued keys resolving to no component fall back to a root render"
+         (let [renders (atom 0)
+               r       (reconciler-with (fn [_ _] nil))
+               root    (Root. #js {:omcljs$reconciler r
+                                   :omcljs$path       [:x]
+                                   :omcljs$value      (om/om-props {:foo 1} 1)})]
+           (swap! (:state r) assoc :queue [:foo] :root root :t 2
+                  :render #(swap! renders inc))
+           (p/reconcile! r)
+           (is (= 1 @renders))))
+       (testing "an indexed component is updated directly, without a root render"
+         (let [renders (atom 0)
+               forced  (atom false)
+               Comp    (ui
+                         Object
+                         (render [this] (om/props this)))
+               r       (reconciler-with (fn [{:keys [class->components]} _]
+                                          (get class->components Comp)))
+               root    (Root. #js {:omcljs$reconciler r
+                                   :omcljs$path       [:x]
+                                   :omcljs$value      (om/om-props {:foo 1} 1)})
+               c       (Comp. #js {:omcljs$reconciler r
+                                   :omcljs$parent     root
+                                   :omcljs$value      (om/om-props {:foo 1} 2)})]
+           (set! (. c -forceUpdate) (fn [] (reset! forced true)))
+           (with-redefs [om/mounted? (constantly true)]
+             (p/index-component! (om/get-indexer r) c)
+             (swap! (:state r) assoc :queue [:foo] :root root :t 2
+                    :render #(swap! renders inc))
+             (p/reconcile! r)
+             (is (true? @forced))
+             (is (zero? @renders))))))))
+
 (deftest test-tx-listen
   (let [ret (atom [])
         r (om/reconciler {:state (atom {:app/count 0})
