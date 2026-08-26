@@ -2521,7 +2521,8 @@
           ;; drop this update. Re-render from the root instead of losing it.
           #?(:cljs
              (when (empty? cs)
-               ((:render st))))
+               (when-let [render (:render st)]
+                 (render))))
           #?(:cljs
              (doseq [c ((:optimize config) cs)]
                (let [props-change? (> (p/basis-t this) (t c))]

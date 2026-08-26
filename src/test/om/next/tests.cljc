@@ -2569,20 +2569,20 @@
          (is (true? (:forceUpdate @update-atom)))))))
 
 #?(:cljs
+   (defn- reconcile-outcome
+     "Run f, reporting whether it completed rather than what it returned."
+     [f]
+     (try (f) :completed (catch :default _ :threw))))
+
+#?(:cljs
    (deftest test-reconcile-root-render-when-nothing-indexed
      (let [Root (ui
                   static om/IQuery
                   (query [this]
-                    [:foo]))
-           reconciler-with (fn [ref->components]
-                             (om/reconciler
-                               {:indexer #(om/indexer
-                                            {:index-component (fn [indexes component] indexes)
-                                             :drop-component  (fn [indexes component] indexes)
-                                             :ref->components ref->components})}))]
+                    [:foo]))]
        (testing "queued keys resolving to no component fall back to a root render"
          (let [renders (atom 0)
-               r       (reconciler-with (fn [_ _] nil))
+               r       (om/reconciler {})
                root    (Root. #js {:omcljs$reconciler r
                                    :omcljs$path       [:x]
                                    :omcljs$value      (om/om-props {:foo 1} 1)})]
@@ -2596,8 +2596,12 @@
                Comp    (ui
                          Object
                          (render [this] (om/props this)))
-               r       (reconciler-with (fn [{:keys [class->components]} _]
-                                          (get class->components Comp)))
+               r       (om/reconciler
+                         {:indexer #(om/indexer
+                                      {:index-component (fn [indexes component] indexes)
+                                       :drop-component  (fn [indexes component] indexes)
+                                       :ref->components (fn [{:keys [class->components]} _]
+                                                          (get class->components Comp))})})
                root    (Root. #js {:omcljs$reconciler r
                                    :omcljs$path       [:x]
                                    :omcljs$value      (om/om-props {:foo 1} 1)})
@@ -2612,6 +2616,67 @@
              (p/reconcile! r)
              (is (true? @forced))
              (is (zero? @renders))))))))
+
+#?(:cljs
+   (deftest test-reconcile-drops-update-when-no-render-fn
+     (testing "queued keys resolving to nothing, before a root exists"
+       (let [r (om/reconciler {})]
+         (swap! (:state r) assoc :queue [:foo] :t 2)
+         (is (nil? (:render @(:state r))))
+         (is (= :completed (reconcile-outcome #(p/reconcile! r))))))
+     (testing "a render scheduled before remove-root! and run after it"
+       (let [Root      (ui
+                         static om/IQuery
+                         (query [this]
+                           [:foo]))
+             scheduled (atom [])
+             r         (om/reconciler
+                         {:state  (atom {:foo 1})
+                          :parser (om/parser
+                                    {:read   (fn [{:keys [state target]} k _]
+                                               (when-not target
+                                                 {:value (get @state k)}))
+                                     :mutate (fn [{:keys [state]} _ _]
+                                               {:action #(swap! state update :foo inc)})})})]
+         (om/add-root! r Root nil)
+         (binding [om/*raf* (fn [f] (swap! scheduled conj f))]
+           (om/transact! r '[(bump!) :foo]))
+         (om/remove-root! r nil)
+         (is (= 1 (count @scheduled)))
+         (is (nil? (:render @(:state r))))
+         (is (= :completed (reconcile-outcome (first @scheduled))))))))
+
+#?(:cljs
+   (deftest test-reconcile-fallback-only-when-no-key-resolves
+     (let [Comp    (ui
+                     Object
+                     (render [this] (om/props this)))
+           r       (om/reconciler
+                     {:indexer #(om/indexer
+                                  {:index-component (fn [indexes component] indexes)
+                                   :drop-component  (fn [indexes component] indexes)
+                                   :ref->components (fn [{:keys [class->components]} ref]
+                                                      (when (= ref :resolves)
+                                                        (get class->components Comp)))})})
+           c       (Comp. #js {:omcljs$reconciler r
+                               :omcljs$path       [:x]
+                               :omcljs$value      (om/om-props {:foo 1} 2)})
+           renders (atom 0)
+           forced  (atom false)]
+       (set! (. c -forceUpdate) (fn [] (reset! forced true)))
+       (with-redefs [om/mounted? (constantly true)]
+         (p/index-component! (om/get-indexer r) c)
+         (testing "one resolving key suppresses the fallback for the whole queue"
+           (swap! (:state r) assoc :queue [:resolves :unresolved] :t 2
+                  :render #(swap! renders inc))
+           (p/reconcile! r)
+           (is (true? @forced))
+           (is (zero? @renders)))
+         (testing "the same unresolved key alone does reach the fallback"
+           (reset! renders 0)
+           (swap! (:state r) assoc :queue [:unresolved] :t 2)
+           (p/reconcile! r)
+           (is (= 1 @renders)))))))
 
 (deftest test-tx-listen
   (let [ret (atom [])
