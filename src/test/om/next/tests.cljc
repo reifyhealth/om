@@ -1,6 +1,7 @@
 (ns om.next.tests
   #?(:clj (:refer-clojure :exclude [read]))
-  (:require #?@(:cljs [[cljsjs.react]])
+  (:require #?@(:cljs [[cljsjs.react]
+                       [goog.log :as glog]])
             [clojure.test :refer [deftest is are testing run-tests]]
             [clojure.zip :as zip]
             [om.next :as om #?(:clj :refer :cljs :refer-macros) [defui ui]]
@@ -2570,9 +2571,11 @@
 
 #?(:cljs
    (defn- reconcile-outcome
-     "Run f, reporting whether it completed rather than what it returned."
+     "Run f, reporting whether it completed rather than what it returned. A
+      throw reports the error itself so an unrelated one cannot pass for the
+      one under test."
      [f]
-     (try (f) :completed (catch :default _ :threw))))
+     (try (f) :completed (catch :default e e))))
 
 #?(:cljs
    (deftest test-reconcile-root-render-when-nothing-indexed
@@ -2618,7 +2621,7 @@
              (is (zero? @renders))))))))
 
 #?(:cljs
-   (deftest test-reconcile-drops-update-when-no-render-fn
+   (deftest test-reconcile-tolerates-a-missing-render-fn
      (testing "queued keys resolving to nothing, before a root exists"
        (let [r (om/reconciler {})]
          (swap! (:state r) assoc :queue [:foo] :t 2)
@@ -2682,6 +2685,68 @@
            (swap! (:state r) assoc :queue [:unresolved] :t 2)
            (p/reconcile! r)
            (is (= 1 @renders)))))))
+
+#?(:cljs
+   (defn- fallback-reconciler
+     "A reconciler wired the way an app is: reads served from state, a
+      remote-eligible mutation, and a counting :root-render."
+     [renders send]
+     (om/reconciler
+       (cond-> {:state        (atom {:foo 1})
+                :root-render  (fn [el _] (swap! renders inc) el)
+                :root-unmount (fn [_] nil)
+                :parser       (om/parser
+                                {:read   (fn [{:keys [state target]} k _]
+                                           (when-not target
+                                             {:value (get @state k)}))
+                                 :mutate (fn [{:keys [state]} _ _]
+                                           {:remote true
+                                            :action #(swap! state update :foo inc)})})}
+         send (assoc :send send)))))
+
+#?(:cljs
+   (deftest test-reconcile-fallback-through-the-scheduled-render
+     (testing "a transact! whose read key matches nothing renders the root"
+       (let [renders   (atom 0)
+             scheduled (atom [])
+             Root      (ui
+                         static om/IQuery
+                         (query [this]
+                           [:foo]))
+             r         (fallback-reconciler renders nil)]
+         (om/add-root! r Root "target")
+         (binding [om/*raf* (fn [f] (swap! scheduled conj f))]
+           (om/transact! r '[(bump!) :foo]))
+         (is (= 1 (count @scheduled)))
+         (is (empty? (p/key->components (om/get-indexer r) :foo))
+           "precondition: nothing is indexed, so the queued key resolves to nothing")
+         (reset! renders 0)
+         ((first @scheduled))
+         (is (= 1 @renders))))))
+
+#?(:cljs
+   (deftest test-reconcile-fallback-on-the-remote-path
+     (testing "a remote response whose keys match nothing renders the root"
+       (let [renders (atom 0)
+             cb      (atom nil)
+             r       (fallback-reconciler renders (fn [_ callback] (reset! cb callback)))]
+         (om/transact! r '[(bump!)])
+         (p/send! r)
+         (is (some? @cb) "precondition: the send callback was captured")
+         (swap! (:state r) assoc :render #(swap! renders inc))
+         (@cb {:foo 2} '[(bump!)] :remote)
+         (is (= 1 @renders))))))
+
+#?(:cljs
+   (deftest test-reconcile-fallback-warns
+     (let [logged (atom [])
+           logger (glog/getLogger "om.next.tests.fallback")
+           r      (om/reconciler {:logger logger})]
+       (glog/addHandler logger (fn [record] (swap! logged conj (.getMessage record))))
+       (swap! (:state r) assoc :queue [:foo] :t 2 :render (fn []))
+       (p/reconcile! r)
+       (is (= 1 (count @logged)))
+       (is (some #(re-find #"\[:foo\]" %) @logged)))))
 
 (deftest test-tx-listen
   (let [ret (atom [])

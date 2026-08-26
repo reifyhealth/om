@@ -2516,16 +2516,19 @@
               {:keys [ui->props]} config
               env (to-env config)
               root (:root @state)]
-          ;; Nothing in the indexer answers to the queued keys. Under a React 18
-          ;; concurrent root the initial mount may not have committed yet, so no
-          ;; component is registered and the targeted pass below would silently
-          ;; drop this update. Re-render from the root instead of losing it.
+          ;; No indexed component answers to any queued key, so the targeted
+          ;; pass below would iterate an empty set and drop the update. Take the
+          ;; root path instead. Components register from componentWillMount, so
+          ;; a render pass that has been scheduled but not yet run leaves the
+          ;; index empty — reachable whenever the root render is asynchronous,
+          ;; as under a React 18 concurrent root. Keys that simply match nothing
+          ;; reach this too, at the cost of a root-query parse.
           #?(:cljs
              (when (empty? cs)
                (when-let [render (:render st)]
                  (when-let [l (:logger env)]
                    (glog/warning l
-                     (str "reconcile! fell back to a root render; no indexed "
+                     (str "reconcile! took the root render path; no indexed "
                           "component answers to " (pr-str q))))
                  (render))))
           #?(:cljs
