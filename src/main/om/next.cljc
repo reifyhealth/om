@@ -2522,6 +2522,10 @@
           #?(:cljs
              (when (empty? cs)
                (when-let [render (:render st)]
+                 (when-let [l (:logger env)]
+                   (glog/warning l
+                     (str "reconcile! fell back to a root render; no indexed "
+                          "component answers to " (pr-str q))))
                  (render))))
           #?(:cljs
              (doseq [c ((:optimize config) cs)]
