@@ -2624,27 +2624,32 @@
          (swap! (:state r) assoc :queue [:foo] :t 2)
          (is (nil? (:render @(:state r))))
          (is (= :completed (reconcile-outcome #(p/reconcile! r))))))
-     (testing "a render scheduled before remove-root! and run after it"
-       (let [Root      (ui
-                         static om/IQuery
-                         (query [this]
-                           [:foo]))
-             scheduled (atom [])
-             r         (om/reconciler
-                         {:state  (atom {:foo 1})
-                          :parser (om/parser
-                                    {:read   (fn [{:keys [state target]} k _]
-                                               (when-not target
-                                                 {:value (get @state k)}))
-                                     :mutate (fn [{:keys [state]} _ _]
-                                               {:action #(swap! state update :foo inc)})})})]
-         (om/add-root! r Root nil)
-         (binding [om/*raf* (fn [f] (swap! scheduled conj f))]
-           (om/transact! r '[(bump!) :foo]))
-         (om/remove-root! r nil)
-         (is (= 1 (count @scheduled)))
-         (is (nil? (:render @(:state r))))
-         (is (= :completed (reconcile-outcome (first @scheduled))))))))
+     (let [pending-after-remove-root
+           (fn [tx]
+             (let [Root      (ui
+                               static om/IQuery
+                               (query [this]
+                                 [:foo]))
+                   scheduled (atom [])
+                   r         (om/reconciler
+                               {:state  (atom {:foo 1})
+                                :parser (om/parser
+                                          {:read   (fn [{:keys [state target]} k _]
+                                                     (when-not target
+                                                       {:value (get @state k)}))
+                                           :mutate (fn [{:keys [state]} _ _]
+                                                     {:action #(swap! state update :foo inc)})})})]
+               (om/add-root! r Root nil)
+               (binding [om/*raf* (fn [f] (swap! scheduled conj f))]
+                 (om/transact! r tx))
+               (om/remove-root! r nil)
+               (is (= 1 (count @scheduled)))
+               (is (nil? (:render @(:state r))))
+               (reconcile-outcome (first @scheduled))))]
+       (testing "a render scheduled before remove-root! and run after it"
+         (is (= :completed (pending-after-remove-root '[(bump!) :foo]))))
+       (testing "the same race with a mutation queueing no read keys"
+         (is (= :completed (pending-after-remove-root '[(bump!)])))))))
 
 #?(:cljs
    (deftest test-reconcile-fallback-only-when-no-key-resolves

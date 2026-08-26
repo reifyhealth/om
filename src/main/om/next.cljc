@@ -2508,7 +2508,8 @@
         (swap! state assoc :queue []))
       (if (empty? q)
         ;; TODO: need to move root re-render logic outside of batching logic
-        ((:render st))
+        (when-let [render (:render st)]
+          (render))
         (let [cs (transduce
                    (map #(p/key->components (:indexer config) %))
                    #(into %1 %2) #{} q)
