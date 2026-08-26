@@ -2739,14 +2739,19 @@
 
 #?(:cljs
    (deftest test-reconcile-fallback-warns
-     (let [logged (atom [])
-           logger (glog/getLogger "om.next.tests.fallback")
-           r      (om/reconciler {:logger logger})]
-       (glog/addHandler logger (fn [record] (swap! logged conj (.getMessage record))))
-       (swap! (:state r) assoc :queue [:foo] :t 2 :render (fn []))
-       (p/reconcile! r)
-       (is (= 1 (count @logged)))
-       (is (some #(re-find #"\[:foo\]" %) @logged)))))
+     (let [logged  (atom [])
+           logger  (glog/getLogger "om.next.tests.fallback")
+           handler (fn [record] (swap! logged conj (.getMessage record)))
+           r       (om/reconciler {:logger logger})]
+       (glog/addHandler logger handler)
+       (try
+         (swap! (:state r) assoc :queue [:foo] :t 2 :render (fn []))
+         (p/reconcile! r)
+         (is (= 1 (count @logged)))
+         (is (some #(re-find #"\[:foo\]" %) @logged))
+         (finally
+           ;; goog.log caches loggers by name for the life of the runtime.
+           (glog/removeHandler logger handler))))))
 
 (deftest test-tx-listen
   (let [ret (atom [])
