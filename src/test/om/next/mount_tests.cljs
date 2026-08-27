@@ -161,3 +161,67 @@
             (is ok (str "expected a render after the remote reconcile; DOM is "
                         (pr-str (text target))))
             (done)))))))
+
+;; -----------------------------------------------------------------------------
+;; The root-render fallback
+
+(deftest test-root-render-fallback-when-no-key-resolves
+  (testing "a queued key that resolves to no component renders the root"
+    (async done
+      (let [{:keys [reconciler target renders]} (app)
+            before @renders]
+        (om/transact! reconciler '[(root/rename-first {:label "fell-back"}) :nothing/queried])
+        (env/wait-for (shows? target "fell-back")
+          (fn [ok]
+            (is ok (str "expected a root render to carry the mutation; DOM is "
+                        (pr-str (text target))))
+            (is (= 1 (- @renders before)))
+            (done)))))))
+
+(deftest test-fallback-carries-a-transaction-that-lands-before-the-first-render
+  (testing "the concurrent-root case: nothing is indexed yet when the transaction lands"
+    (if-not (env/concurrent-root-available?)
+      ;; Asserting the reason, so a runtime that ought to offer createRoot cannot
+      ;; skip this quietly.
+      (is (< (env/react-major) 18)
+        (str "react-dom/client absent, so an asynchronous root cannot arise on "
+             "React " (env/react-major)))
+      (async done
+        (let [{:keys [reconciler target renders]} (app :concurrent? true)
+              before  @renders
+              pending (atom [])]
+          (is (empty? @children)
+            "createRoot schedules the render rather than performing it, so no
+             component has registered yet")
+          ;; The scenario is an ordering — the scheduled render has not run when
+          ;; the transaction lands — so the test states it through om's own *raf*
+          ;; seam instead of racing the runtime for it. Left to real frame
+          ;; timing, React's flush usually wins and the transaction takes the
+          ;; targeted path, which is a different test.
+          (binding [om/*raf* (fn [f] (swap! pending conj f))]
+            (om/transact! reconciler '[(root/rename-first {:label "boot"}) :items])
+            (doseq [f @pending] (f)))
+          (is (= 1 (- @renders before))
+            "the queued key resolves to nothing, so reconcile! renders the root")
+          (env/wait-for (shows? target "boot")
+            (fn [ok]
+              (is ok (str "expected the fallback's render to reach the DOM; DOM is "
+                          (pr-str (text target))))
+              (done))))))))
+
+;; -----------------------------------------------------------------------------
+;; Teardown races
+
+(deftest test-reconcile-after-remove-root-drops-the-render
+  (testing "remove-root! dissocs :render while leaving the queue, so reconcile! is
+            reachable with no way to render"
+    (let [{:keys [reconciler target]} (app)]
+      (om/transact! reconciler '[(root/rename-first {:label "race"}) :nothing/queried])
+      (om/remove-root! reconciler target)
+      (is (nil? (p/reconcile! reconciler))
+        "queued keys that resolve to nothing take the fallback"))
+    (let [{:keys [reconciler target]} (app)]
+      (om/transact! reconciler '[(root/rename-first {:label "race"})])
+      (om/remove-root! reconciler target)
+      (is (nil? (p/reconcile! reconciler))
+        "a mutation with no read keys queues nothing and takes the empty-queue branch"))))
