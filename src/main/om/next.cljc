@@ -2521,7 +2521,11 @@
           q (if-not (nil? remote)
               (get-in st [:remote-queue remote])
               (:queue st))]
-      (swap! state update-in [:queued] not)
+      ;; `schedule-render!` sets this; clearing it is what lets the next state
+      ;; change schedule a render. Toggling instead sets it on a reconcile! that
+      ;; no scheduled render preceded — the remote path — after which
+      ;; `schedule-render!` believes a render is already pending and queues none.
+      (swap! state assoc :queued false)
       (if (not (nil? remote))
         (swap! state assoc-in [:remote-queue remote] [])
         (swap! state assoc :queue []))

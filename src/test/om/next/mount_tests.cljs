@@ -142,3 +142,22 @@
             (is (= before @renders)
               "the queue resolves to the component, so this is the targeted path")
             (done)))))))
+
+;; -----------------------------------------------------------------------------
+;; Scheduler state
+
+(deftest test-remote-reconcile-leaves-the-scheduler-usable
+  (testing "a reconcile! that no scheduled render preceded does not stop later
+            transactions from rendering"
+    (async done
+      (let [{:keys [reconciler target]} (app)
+            c (first @children)]
+        ;; What send!'s 3-arity callback does: reconcile a remote directly, with
+        ;; no render pending.
+        (p/reconcile! reconciler :remote)
+        (om/transact! c '[(item/rename {:label "after-remote"})])
+        (env/wait-for (shows? target "after-remote")
+          (fn [ok]
+            (is ok (str "expected a render after the remote reconcile; DOM is "
+                        (pr-str (text target))))
+            (done)))))))
