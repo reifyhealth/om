@@ -157,6 +157,7 @@
       `(~name [this#]
          (let [~this    this#
                indexer# (get-in (om.next/get-reconciler this#) [:config :indexer])]
+           (om.next/-set-mounted! this# true)
            (when-not (nil? indexer#)
              (om.next.protocols/index-component! indexer# this#))
            ~@body)))
@@ -173,7 +174,8 @@
              (swap! st# update-in [:om.next/queries] dissoc this#))
            (when-not (nil? indexer#)
              (om.next.protocols/drop-component! indexer# this#))
-           ~@body)))
+           ~@body
+           (om.next/-set-mounted! this# false))))
     'render
     (fn [[name [this :as args] & body]]
       `(~name [this#]
@@ -187,11 +189,7 @@
    :defaults
    `{~'isMounted
      ([this#]
-      (boolean
-        (or (some-> this# .-_reactInternalFiber .-stateNode)
-            ;; Pre React 16 support. Remove when we don't wish to support
-            ;; React < 16 anymore - Antonio
-            (some-> this# .-_reactInternalInstance .-_renderedComponent))))
+      (om.next/-mounted? this#))
      ~'shouldComponentUpdate
      ([this# next-props# next-state#]
       (let [next-children# (. next-props# -children)
@@ -225,6 +223,7 @@
        (om.next/clear-prev-props! this#))
      ~'componentWillMount
      ([this#]
+       (om.next/-set-mounted! this# true)
        (let [indexer# (get-in (om.next/get-reconciler this#) [:config :indexer])]
          (when-not (nil? indexer#)
            (om.next.protocols/index-component! indexer# this#))))
@@ -238,7 +237,8 @@
                     (get-in @st# [:om.next/queries this#]))
            (swap! st# update-in [:om.next/queries] dissoc this#))
          (when-not (nil? indexer#)
-           (om.next.protocols/drop-component! indexer# this#))))}})
+           (om.next.protocols/drop-component! indexer# this#))
+         (om.next/-set-mounted! this# false)))}})
 
 (defn reshape [dt {:keys [reshape defaults]}]
   (letfn [(reshape* [x]
@@ -1364,6 +1364,25 @@
      (apply f {:query  (get-unbound-query component)
                :params (get-params component)}
        arg0 arg1 arg2 arg3 arg-rest))))
+
+#?(:cljs
+   (defn -set-mounted!
+     "Record a component's liveness. Called from the componentWillMount and
+      componentWillUnmount `defui` generates, which bracket the component's
+      presence in the indexer, so a component is live here exactly while the
+      reconciler can resolve a key to it."
+     [c mounted?]
+     (gobj/set c "omcljs$mounted?" mounted?)))
+
+#?(:cljs
+   (defn -mounted?
+     "The liveness recorded by -set-mounted!, and what the generated `isMounted`
+      answers with. React's own instance field is not usable for this: its name
+      changed in React 17, and on some versions it still resolves after the
+      component is unmounted."
+     {:tag boolean}
+     [c]
+     (true? (gobj/get c "omcljs$mounted?" false))))
 
 (defn mounted?
   "Returns true if the component is mounted."
