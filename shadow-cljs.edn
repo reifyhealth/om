@@ -1,0 +1,11 @@
+{:deps true
+
+ :builds
+ {;; om.next.tests plus the mount tests, which drive the reconciler against a
+  ;; real react-dom in a jsdom document. REACT_VERSION selects the runtime that
+  ;; om.test-env installs; see package.json.
+  :test
+  {:target    :node-test
+   :output-to "out/test.js"
+   :ns-regexp "^om\\.next\\.(tests|mount-tests)$"
+   :autorun   false}}}

@@ -1,0 +1,15 @@
+{
+  "name": "om-test-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "React runtime and DOM for om's ClojureScript test suite. Not published; om itself declares no npm dependencies.",
+  "scripts": {
+    "test": "clojure -M -m shadow.cljs.devtools.cli compile test && node out/test.js",
+    "test:react-matrix": "for v in 16.14.0 17.0.2 18.3.1; do npm i --no-save --no-audit --no-fund react@$v react-dom@$v && npm test || exit 1; done"
+  },
+  "devDependencies": {
+    "jsdom": "24.1.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}
