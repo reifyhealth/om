@@ -2,10 +2,13 @@
 
  :builds
  {;; om.next.tests plus the mount tests, which drive the reconciler against a
-  ;; real react-dom in a jsdom document. REACT_VERSION selects the runtime that
-  ;; om.test-env installs; see package.json.
+  ;; real react-dom in a jsdom document. Whichever react/react-dom node_modules
+  ;; holds is the runtime under test; package.json's test:react-matrix sweeps
+  ;; versions by installing them.
   :test
   {:target    :node-test
    :output-to "out/test.js"
    :ns-regexp "^om\\.next\\.(tests|mount-tests)$"
+   ;; The bundle's own main runs the suite. :autorun only adds a second,
+   ;; shadow-spawned `node out/test.js` on top of the one package.json runs.
    :autorun   false}}}
