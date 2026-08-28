@@ -126,6 +126,55 @@
           "componentWillUnmount runs while still mounted, as React defines it")
         (is (false? (om/mounted? c)))))))
 
+(defonce throwing (atom []))
+
+(defui ThrowingUnmount
+  static om/Ident
+  (ident [_ props] [:item/by-id (:id props)])
+  static om/IQuery
+  (query [_] [:id :label])
+  Object
+  (componentDidMount [this]
+    (swap! throwing conj this))
+  (componentWillUnmount [_]
+    (throw (js/Error. "componentWillUnmount")))
+  (render [this]
+    (js/React.createElement "span" nil (str (:label (om/props this)) " "))))
+
+(def throwing-factory (om/factory ThrowingUnmount))
+
+(defui ThrowingUnmountRoot
+  static om/IQuery
+  (query [_] [{:items (om/get-query ThrowingUnmount)}])
+  Object
+  (render [this]
+    (apply js/React.createElement "div" nil
+      (map throwing-factory (:items (om/props this))))))
+
+(deftest test-mounted-clears-when-a-will-unmount-body-throws
+  (testing "React removes the component whether or not the body throws, so a
+            retained reference must stop reporting itself mounted either way"
+    (reset! throwing [])
+    (let [target (env/fresh-target!)
+          r      (om/reconciler
+                   {:state  (atom initial-state)
+                    :parser (om/parser {:read reader :mutate mutate})})]
+      (om/add-root! r ThrowingUnmountRoot target)
+      (let [c        (first @throwing)
+            reported (.-error js/console)]
+        (is (true? (om/mounted? c)))
+        ;; react-dom reports a commit-phase error through console.error. The
+        ;; throw is what this test arranges, so its report is not a failure.
+        (set! (.-error js/console) (fn [& _]))
+        (try
+          (is (thrown? js/Error (om/remove-root! r target)))
+          (finally
+            (set! (.-error js/console) reported)))
+        (is (false? (om/mounted? c)))
+        (is (empty? (p/key->components (get-in r [:config :indexer]) [:item/by-id 1]))
+          "the indexer drops the component before the body runs, so liveness is
+           the only record left to get wrong")))))
+
 ;; -----------------------------------------------------------------------------
 ;; The targeted path
 

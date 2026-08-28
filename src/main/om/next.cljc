@@ -174,8 +174,13 @@
              (swap! st# update-in [:om.next/queries] dissoc this#))
            (when-not (nil? indexer#)
              (om.next.protocols/drop-component! indexer# this#))
-           ~@body
-           (om.next/-set-mounted! this# false))))
+           ;; After the body, so a body still sees itself as mounted; in a
+           ;; `finally`, because React removes the component whether or not the
+           ;; body throws and a retained reference must not outlive its liveness.
+           (try
+             ~@body
+             (finally
+               (om.next/-set-mounted! this# false))))))
     'render
     (fn [[name [this :as args] & body]]
       `(~name [this#]
