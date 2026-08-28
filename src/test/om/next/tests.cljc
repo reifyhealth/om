@@ -1,6 +1,7 @@
 (ns om.next.tests
   #?(:clj (:refer-clojure :exclude [read]))
-  (:require #?@(:cljs [[cljsjs.react]])
+  (:require #?@(:cljs [[cljsjs.react]
+                       [goog.log :as glog]])
             [clojure.test :refer [deftest is are testing run-tests]]
             [clojure.zip :as zip]
             [om.next :as om #?(:clj :refer :cljs :refer-macros) [defui ui]]
@@ -2567,6 +2568,198 @@
          (is (= (-> @update-atom :componentWillReceiveProps)
                 {:foo 1}))
          (is (true? (:forceUpdate @update-atom)))))))
+
+#?(:cljs
+   (defn- reconcile-outcome
+     "Run f, reporting whether it completed rather than what it returned. A
+      throw reports the error itself so an unrelated one cannot pass for the
+      one under test."
+     [f]
+     (try (f) :completed (catch :default e e))))
+
+#?(:cljs
+   (deftest test-reconcile-root-render-when-nothing-indexed
+     (let [Root (ui
+                  static om/IQuery
+                  (query [this]
+                    [:foo]))]
+       (testing "queued keys resolving to no component fall back to a root render"
+         (let [renders (atom 0)
+               r       (om/reconciler {})
+               root    (Root. #js {:omcljs$reconciler r
+                                   :omcljs$path       [:x]
+                                   :omcljs$value      (om/om-props {:foo 1} 1)})]
+           (swap! (:state r) assoc :queue [:foo] :root root :t 2
+                  :render #(swap! renders inc))
+           (p/reconcile! r)
+           (is (= 1 @renders))))
+       (testing "an indexed component is updated directly, without a root render"
+         (let [renders (atom 0)
+               forced  (atom false)
+               Comp    (ui
+                         Object
+                         (render [this] (om/props this)))
+               r       (om/reconciler
+                         {:indexer #(om/indexer
+                                      {:index-component (fn [indexes component] indexes)
+                                       :drop-component  (fn [indexes component] indexes)
+                                       :ref->components (fn [{:keys [class->components]} _]
+                                                          (get class->components Comp))})})
+               root    (Root. #js {:omcljs$reconciler r
+                                   :omcljs$path       [:x]
+                                   :omcljs$value      (om/om-props {:foo 1} 1)})
+               c       (Comp. #js {:omcljs$reconciler r
+                                   :omcljs$parent     root
+                                   :omcljs$value      (om/om-props {:foo 1} 2)})]
+           (set! (. c -forceUpdate) (fn [] (reset! forced true)))
+           (with-redefs [om/mounted? (constantly true)]
+             (p/index-component! (om/get-indexer r) c)
+             (swap! (:state r) assoc :queue [:foo] :root root :t 2
+                    :render #(swap! renders inc))
+             (p/reconcile! r)
+             (is (true? @forced))
+             (is (zero? @renders))))))))
+
+#?(:cljs
+   (deftest test-reconcile-tolerates-a-missing-render-fn
+     (testing "queued keys resolving to nothing, before a root exists"
+       (let [r (om/reconciler {})]
+         (swap! (:state r) assoc :queue [:foo] :t 2)
+         (is (nil? (:render @(:state r))))
+         (is (= :completed (reconcile-outcome #(p/reconcile! r))))))
+     (let [pending-after-remove-root
+           (fn [tx]
+             (let [Root      (ui
+                               static om/IQuery
+                               (query [this]
+                                 [:foo]))
+                   scheduled (atom [])
+                   r         (om/reconciler
+                               {:state  (atom {:foo 1})
+                                :parser (om/parser
+                                          {:read   (fn [{:keys [state target]} k _]
+                                                     (when-not target
+                                                       {:value (get @state k)}))
+                                           :mutate (fn [{:keys [state]} _ _]
+                                                     {:action #(swap! state update :foo inc)})})})]
+               (om/add-root! r Root nil)
+               (binding [om/*raf* (fn [f] (swap! scheduled conj f))]
+                 (om/transact! r tx))
+               (om/remove-root! r nil)
+               (is (= 1 (count @scheduled)))
+               (is (nil? (:render @(:state r))))
+               (reconcile-outcome (first @scheduled))))]
+       (testing "a render scheduled before remove-root! and run after it"
+         (is (= :completed (pending-after-remove-root '[(bump!) :foo]))))
+       (testing "the same race with a mutation queueing no read keys"
+         (is (= :completed (pending-after-remove-root '[(bump!)])))))))
+
+#?(:cljs
+   (deftest test-reconcile-fallback-only-when-no-key-resolves
+     (let [Comp    (ui
+                     Object
+                     (render [this] (om/props this)))
+           r       (om/reconciler
+                     {:indexer #(om/indexer
+                                  {:index-component (fn [indexes component] indexes)
+                                   :drop-component  (fn [indexes component] indexes)
+                                   :ref->components (fn [{:keys [class->components]} ref]
+                                                      (when (= ref :resolves)
+                                                        (get class->components Comp)))})})
+           c       (Comp. #js {:omcljs$reconciler r
+                               :omcljs$path       [:x]
+                               :omcljs$value      (om/om-props {:foo 1} 2)})
+           renders (atom 0)
+           forced  (atom false)]
+       (set! (. c -forceUpdate) (fn [] (reset! forced true)))
+       (with-redefs [om/mounted? (constantly true)]
+         (p/index-component! (om/get-indexer r) c)
+         (testing "one resolving key suppresses the fallback for the whole queue"
+           (swap! (:state r) assoc :queue [:resolves :unresolved] :t 2
+                  :render #(swap! renders inc))
+           (p/reconcile! r)
+           (is (true? @forced))
+           (is (zero? @renders)))
+         (testing "the same unresolved key alone does reach the fallback"
+           (reset! renders 0)
+           (swap! (:state r) assoc :queue [:unresolved] :t 2)
+           (p/reconcile! r)
+           (is (= 1 @renders)))))))
+
+#?(:cljs
+   (defn- fallback-reconciler
+     "A reconciler wired the way an app is: reads served from state, a
+      remote-eligible mutation, and a counting :root-render."
+     [renders send]
+     (om/reconciler
+       (cond-> {:state        (atom {:foo 1})
+                :root-render  (fn [el _] (swap! renders inc) el)
+                :root-unmount (fn [_] nil)
+                :parser       (om/parser
+                                {:read   (fn [{:keys [state target]} k _]
+                                           (when-not target
+                                             {:value (get @state k)}))
+                                 :mutate (fn [{:keys [state]} _ _]
+                                           {:remote true
+                                            :action #(swap! state update :foo inc)})})}
+         send (assoc :send send)))))
+
+#?(:cljs
+   (deftest test-reconcile-fallback-through-the-scheduled-render
+     (testing "a transact! whose read key matches nothing renders the root"
+       (let [renders   (atom 0)
+             scheduled (atom [])
+             Root      (ui
+                         static om/IQuery
+                         (query [this]
+                           [:foo]))
+             r         (fallback-reconciler renders nil)]
+         (om/add-root! r Root "target")
+         (binding [om/*raf* (fn [f] (swap! scheduled conj f))]
+           (om/transact! r '[(bump!) :foo]))
+         (is (= 1 (count @scheduled)))
+         (is (empty? (p/key->components (om/get-indexer r) :foo))
+           "precondition: nothing is indexed, so the queued key resolves to nothing")
+         (reset! renders 0)
+         ((first @scheduled))
+         (is (= 1 @renders))))))
+
+#?(:cljs
+   (deftest test-reconcile-fallback-on-the-remote-path
+     (testing "a remote response whose keys match nothing renders the root"
+       (let [renders (atom 0)
+             cb      (atom nil)
+             r       (fallback-reconciler renders (fn [_ callback] (reset! cb callback)))]
+         (om/transact! r '[(bump!)])
+         (p/send! r)
+         (is (some? @cb) "precondition: the send callback was captured")
+         (swap! (:state r) assoc :render #(swap! renders inc))
+         (@cb {:foo 2} '[(bump!)] :remote)
+         (is (= 1 @renders))))))
+
+#?(:cljs
+   (deftest test-reconcile-fallback-warns
+     (let [logged  (atom [])
+           logger  (glog/getLogger "om.next.tests.fallback")
+           handler (fn [record] (swap! logged conj (.getMessage record)))
+           r       (om/reconciler {:logger logger})]
+       (glog/addHandler logger handler)
+       (try
+         (swap! (:state r) assoc :queue [:foo] :t 2 :render (fn []))
+         (p/reconcile! r)
+         (is (= 1 (count @logged)))
+         (is (some #(re-find #"\[:foo\]" %) @logged))
+         (testing "naming an ident by its key, so the diagnostic carries no
+                   application id"
+           (reset! logged [])
+           (swap! (:state r) assoc :queue [[:person/by-id 42]] :render (fn []))
+           (p/reconcile! r)
+           (is (= 1 (count @logged)))
+           (is (some #(re-find #"\[:person/by-id\]" %) @logged))
+           (is (not-any? #(re-find #"42" %) @logged)))
+         (finally
+           ;; goog.log caches loggers by name for the life of the runtime.
+           (glog/removeHandler logger handler))))))
 
 (deftest test-tx-listen
   (let [ret (atom [])
