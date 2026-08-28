@@ -2749,6 +2749,14 @@
          (p/reconcile! r)
          (is (= 1 (count @logged)))
          (is (some #(re-find #"\[:foo\]" %) @logged))
+         (testing "naming an ident by its key, so the diagnostic carries no
+                   application id"
+           (reset! logged [])
+           (swap! (:state r) assoc :queue [[:person/by-id 42]] :render (fn []))
+           (p/reconcile! r)
+           (is (= 1 (count @logged)))
+           (is (some #(re-find #"\[:person/by-id\]" %) @logged))
+           (is (not-any? #(re-find #"42" %) @logged)))
          (finally
            ;; goog.log caches loggers by name for the life of the runtime.
            (glog/removeHandler logger handler))))))

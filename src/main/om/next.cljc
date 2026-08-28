@@ -2555,9 +2555,11 @@
              (when (empty? cs)
                (when-let [render (:render st)]
                  (when-let [l (:logger env)]
+                   ;; An ident reduces to its key: the value is an application id.
                    (glog/warning l
                      (str "reconcile! took the root render path; no indexed "
-                          "component answers to " (pr-str q))))
+                          "component answers to the queued keys "
+                          (pr-str (mapv #(cond-> % (vector? %) first) q)))))
                  (render))))
           #?(:cljs
              (doseq [c ((:optimize config) cs)]
