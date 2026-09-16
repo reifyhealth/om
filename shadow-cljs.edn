@@ -1,4 +1,4 @@
-{:deps true
+{:deps {:aliases [:test]}
 
  :builds
  {;; om.next.tests plus the mount tests, which drive the reconciler against a
