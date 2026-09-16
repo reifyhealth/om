@@ -17,3 +17,5 @@ examples/history
 om.iml
 node_modules
 .cljs_node_repl
+.shadow-cljs
+.cpcache

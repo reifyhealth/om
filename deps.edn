@@ -1,0 +1,14 @@
+;; tools.deps reads this file in preference to pom.xml when om is consumed as a
+;; git dependency, so the root :paths and :deps are what a consumer receives and
+;; mirror pom.xml. The test toolchain lives under the :test alias.
+{:paths ["src/main"]
+ :deps  {com.cognitect/transit-clj  {:mvn/version "0.8.300"}
+         com.cognitect/transit-cljs {:mvn/version "0.8.239"}
+         cljsjs/react               {:mvn/version "16.0.0-0"}
+         cljsjs/react-dom           {:mvn/version "16.0.0-0"}}
+ :aliases
+ {:test {:extra-paths   ["src/test" "src/test-node"]
+         :extra-deps    {thheller/shadow-cljs      {:mvn/version "2.15.12"}
+                         org.clojure/clojurescript {:mvn/version "1.10.879"}}
+         ;; shadow-cljs needs a newer transit-clj than the root pins.
+         :override-deps {com.cognitect/transit-clj {:mvn/version "1.0.324"}}}}}

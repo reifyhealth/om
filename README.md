@@ -67,6 +67,18 @@ also a variety of other guides [here](https://github.com/omcljs/om/wiki#om-next)
 
 There is documentation [here](https://github.com/omcljs/om/wiki/Documentation-%28om.next%29)
 
+## Tests
+
+```
+npm install
+npm test                  # one React version, whichever node_modules holds
+npm run test:react-matrix # 16.14.0, 17.0.2 and 18.3.1 in turn
+```
+
+`om.next.tests` runs without a DOM. `om.next.mount-tests` mounts a real
+react-dom tree in jsdom, which is what covers the liveness check, the scheduler
+and the render path; each run prints the React version it loaded.
+
 ## Contributing
 
 Please contact me via email to request an electronic Contributor
